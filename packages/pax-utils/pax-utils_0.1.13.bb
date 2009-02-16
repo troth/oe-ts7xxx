@@ -1,8 +1,8 @@
 DESCRIPTION = "Various ELF utilities"
 HOMEPAGE    = "http://www.gentoo.org/proj/en/hardened/pax-utils.xml"
 LICENSE     = "GPLv2"
-
-SRC_URI     = "http://dev.gentoo.org/~solar/pax/pax-utils-${PV}.tar.bz2"
+PR          = "r1"
+SRC_URI     = "http://gentoo.osuosl.org/distfiles/pax-utils-${PV}.tar.bz2"
 S           = "${WORKDIR}/pax-utils-${PV}"
 
 CPPFLAGS   += "-D_GNU_SOURCE "
