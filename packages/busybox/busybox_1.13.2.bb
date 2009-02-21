@@ -37,6 +37,12 @@ do_configure () {
 	if [ "${TARGET_ARCH}" = "avr32" ] ; then
 		sed -i s:CONFIG_FEATURE_OSF_LABEL=y:CONFIG_FEATURE_OSF_LABEL=n: ${S}/.config
 	fi
+	if [ "${BUSYBOX_ENABLE_CTTYHACK}" = "yes" ] ; then
+		sed -i -e 's:# CONFIG_CTTYHACK is not set:CONFIG_CTTYHACK=y:' ${S}/.config
+	fi
+	if [ "${BUSYBOX_DISABLE_INITRD}" = "yes" ] ; then
+		sed -i -e 's:CONFIG_FEATURE_INITRD=y:# CONFIG_FEATURE_INITRD is not set:' ${S}/.config
+	fi
 	cml1_do_configure
 }
 
