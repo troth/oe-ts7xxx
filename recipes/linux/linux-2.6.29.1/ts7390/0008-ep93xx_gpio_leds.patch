@@ -1,0 +1,67 @@
+From e159e0e247a9ae9f1ff54b5c6ad66ba89216acef Mon Sep 17 00:00:00 2001
+From: Matthieu Crapet <mcrapet@gmail.com>
+Date: Sun, 5 Apr 2009 14:01:19 +0200
+Subject: [PATCH 08/23] ep93xx_gpio_leds
+
+---
+ arch/arm/mach-ep93xx/core.c |   30 ++++++++++++++++++++++++++++++
+ 1 files changed, 30 insertions(+), 0 deletions(-)
+
+diff --git a/arch/arm/mach-ep93xx/core.c b/arch/arm/mach-ep93xx/core.c
+index 009e796..41a81ff 100644
+--- a/arch/arm/mach-ep93xx/core.c
++++ b/arch/arm/mach-ep93xx/core.c
+@@ -36,6 +36,7 @@
+ #include <linux/io.h>
+ #include <linux/i2c.h>
+ #include <linux/i2c-gpio.h>
++#include <linux/leds.h>
+ 
+ #include <asm/types.h>
+ #include <asm/setup.h>
+@@ -572,6 +573,34 @@ void __init ep93xx_register_i2c(struct i2c_board_info *devices, int num)
+ 	platform_device_register(&ep93xx_i2c_device);
+ }
+ 
++static const struct gpio_led ep93xx_led_pins[] = {
++  {
++    .name = "green",
++    .gpio = EP93XX_GPIO_LINE_GRLED,
++    .active_low = 0,
++    .default_trigger = "heartbeat",
++  },
++  {
++    .name = "red",
++    .gpio = EP93XX_GPIO_LINE_RDLED,
++    .active_low = 0,
++  }
++};
++
++static const struct gpio_led_platform_data ep93xx_led_data = {
++  .num_leds = ARRAY_SIZE(ep93xx_led_pins),
++  .leds = (void *)ep93xx_led_pins,
++};
++
++static struct platform_device ep93xx_gpio_leds = {
++  .name = "leds-gpio",
++  .id = -1,
++  .dev = {
++    .platform_data = (void *)&ep93xx_led_data,
++  }
++};
++
++
+ extern void ep93xx_gpio_init(void);
+ 
+ void __init ep93xx_init_devices(void)
+@@ -585,6 +614,7 @@ void __init ep93xx_init_devices(void)
+ 	amba_device_register(&uart2_device, &iomem_resource);
+ 	amba_device_register(&uart3_device, &iomem_resource);
+ 
++  platform_device_register(&ep93xx_gpio_leds);
+ 	platform_device_register(&ep93xx_rtc_device);
+ 	platform_device_register(&ep93xx_ohci_device);
+ }
+-- 
+1.6.2.1
+

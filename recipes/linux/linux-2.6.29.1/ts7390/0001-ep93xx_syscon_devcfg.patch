@@ -1,0 +1,203 @@
+From 2aeec21c1d98e65ef33f9b96aa2d6b05c7ed9dc0 Mon Sep 17 00:00:00 2001
+From: Matthieu Crapet <mcrapet@gmail.com>
+Date: Sun, 5 Apr 2009 10:16:53 +0200
+Subject: [PATCH 01/23] ep93xx_syscon_devcfg
+
+---
+ arch/arm/kernel/crunch.c                        |   13 +++++--
+ arch/arm/mach-ep93xx/core.c                     |   44 +++++++++++++++++++----
+ arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h |   33 ++++++++++++++++-
+ arch/arm/mach-ep93xx/include/mach/platform.h    |   13 +++++++
+ arch/arm/mach-ep93xx/include/mach/system.h      |   10 +++---
+ 5 files changed, 95 insertions(+), 18 deletions(-)
+
+diff --git a/arch/arm/kernel/crunch.c b/arch/arm/kernel/crunch.c
+index 99995c2..dd579e3 100644
+--- a/arch/arm/kernel/crunch.c
++++ b/arch/arm/kernel/crunch.c
+@@ -31,7 +31,7 @@ void crunch_task_release(struct thread_info *thread)
+ 
+ static int crunch_enabled(u32 devcfg)
+ {
+-	return !!(devcfg & EP93XX_SYSCON_DEVICE_CONFIG_CRUNCH_ENABLE);
++	return !!(devcfg & EP93XX_SYSCON_DEVCFG_CPENA);
+ }
+ 
+ static int crunch_do(struct notifier_block *self, unsigned long cmd, void *t)
+@@ -56,11 +56,16 @@ static int crunch_do(struct notifier_block *self, unsigned long cmd, void *t)
+ 		break;
+ 
+ 	case THREAD_NOTIFY_SWITCH:
+-		devcfg = __raw_readl(EP93XX_SYSCON_DEVICE_CONFIG);
++		devcfg = __raw_readl(EP93XX_SYSCON_DEVCFG);
+ 		if (crunch_enabled(devcfg) || crunch_owner == crunch_state) {
+-			devcfg ^= EP93XX_SYSCON_DEVICE_CONFIG_CRUNCH_ENABLE;
++			devcfg ^= EP93XX_SYSCON_DEVCFG_CPENA;
++			/*
++			 * We don't use the ep93xx core function here because
++			 * we are on the context switch path and preemption
++			 * is already disabled.
++			 */
+ 			__raw_writel(0xaa, EP93XX_SYSCON_SWLOCK);
+-			__raw_writel(devcfg, EP93XX_SYSCON_DEVICE_CONFIG);
++			__raw_writel(devcfg, EP93XX_SYSCON_DEVCFG);
+ 		}
+ 		break;
+ 	}
+diff --git a/arch/arm/mach-ep93xx/core.c b/arch/arm/mach-ep93xx/core.c
+index 6d9152d..2560a6a 100644
+--- a/arch/arm/mach-ep93xx/core.c
++++ b/arch/arm/mach-ep93xx/core.c
+@@ -385,6 +385,41 @@ void __init ep93xx_init_irq(void)
+ 
+ 
+ /*************************************************************************
++ * EP93xx System Controller Software Locked register handling
++ *************************************************************************/
++void ep93xx_syscon_swlocked_write(unsigned int reg, unsigned int val)
++{
++	preempt_disable();
++	__raw_writel(0xaa, EP93XX_SYSCON_SWLOCK);
++	__raw_writel(val, reg);
++	preempt_enable();
++}
++EXPORT_SYMBOL(ep93xx_syscon_swlocked_write);
++
++void ep93xx_devcfg_set_clear(unsigned int set_bits, unsigned int clear_bits)
++{
++	unsigned int val;
++
++	/*
++	 * When Maverick Crunch is enabled the syscon device config
++	 * register can be modifed by on task switches.  To avoid
++	 * problems we do the whole read-modify-write sequence with
++	 * preemption disabled.
++	 */
++	preempt_disable();
++
++	val = __raw_readl(EP93XX_SYSCON_DEVCFG);
++	val |= set_bits;
++	val &= ~clear_bits;
++	__raw_writel(0xaa, EP93XX_SYSCON_SWLOCK);
++	__raw_writel(val, EP93XX_SYSCON_DEVCFG);
++
++	preempt_enable();
++}
++EXPORT_SYMBOL(ep93xx_devcfg_set_clear);
++
++
++/*************************************************************************
+  * EP93xx peripheral handling
+  *************************************************************************/
+ #define EP93XX_UART_MCR_OFFSET		(0x0100)
+@@ -543,13 +578,8 @@ void __init ep93xx_init_devices(void)
+ {
+ 	unsigned int v;
+ 
+-	/*
+-	 * Disallow access to MaverickCrunch initially.
+-	 */
+-	v = __raw_readl(EP93XX_SYSCON_DEVICE_CONFIG);
+-	v &= ~EP93XX_SYSCON_DEVICE_CONFIG_CRUNCH_ENABLE;
+-	__raw_writel(0xaa, EP93XX_SYSCON_SWLOCK);
+-	__raw_writel(v, EP93XX_SYSCON_DEVICE_CONFIG);
++	/* Disallow access to MaverickCrunch initially */
++	ep93xx_devcfg_clear_bits(EP93XX_SYSCON_DEVCFG_CPENA);
+ 
+ 	ep93xx_gpio_init();
+ 
+diff --git a/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h b/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h
+index 22d6c9a..a55212d 100644
+--- a/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h
++++ b/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h
+@@ -157,8 +157,37 @@
+ #define EP93XX_SYSCON_STANDBY		EP93XX_SYSCON_REG(0x0c)
+ #define EP93XX_SYSCON_CLOCK_SET1	EP93XX_SYSCON_REG(0x20)
+ #define EP93XX_SYSCON_CLOCK_SET2	EP93XX_SYSCON_REG(0x24)
+-#define EP93XX_SYSCON_DEVICE_CONFIG	EP93XX_SYSCON_REG(0x80)
+-#define EP93XX_SYSCON_DEVICE_CONFIG_CRUNCH_ENABLE	0x00800000
++#define EP93XX_SYSCON_DEVCFG		EP93XX_SYSCON_REG(0x80)
++#define EP93XX_SYSCON_DEVCFG_SWRST	(1<<31)
++#define EP93XX_SYSCON_DEVCFG_D1ONG	(1<<30)
++#define EP93XX_SYSCON_DEVCFG_D0ONG	(1<<29)
++#define EP93XX_SYSCON_DEVCFG_IONU2	(1<<28)
++#define EP93XX_SYSCON_DEVCFG_GONK	(1<<27)
++#define EP93XX_SYSCON_DEVCFG_TONG	(1<<26)
++#define EP93XX_SYSCON_DEVCFG_MONG	(1<<25)
++#define EP93XX_SYSCON_DEVCFG_U3EN	(1<<24)
++#define EP93XX_SYSCON_DEVCFG_CPENA	(1<<23)
++#define EP93XX_SYSCON_DEVCFG_A2ONG	(1<<22)
++#define EP93XX_SYSCON_DEVCFG_A1ONG	(1<<21)
++#define EP93XX_SYSCON_DEVCFG_U2EN	(1<<20)
++#define EP93XX_SYSCON_DEVCFG_EXVC	(1<<19)
++#define EP93XX_SYSCON_DEVCFG_U1EN	(1<<18)
++#define EP93XX_SYSCON_DEVCFG_TIN	(1<<17)
++#define EP93XX_SYSCON_DEVCFG_HC3IN	(1<<15)
++#define EP93XX_SYSCON_DEVCFG_HC3EN	(1<<14)
++#define EP93XX_SYSCON_DEVCFG_HC1IN	(1<<13)
++#define EP93XX_SYSCON_DEVCFG_HC1EN	(1<<12)
++#define EP93XX_SYSCON_DEVCFG_HONIDE	(1<<11)
++#define EP93XX_SYSCON_DEVCFG_GONIDE	(1<<10)
++#define EP93XX_SYSCON_DEVCFG_PONG	(1<<9)
++#define EP93XX_SYSCON_DEVCFG_EONIDE	(1<<8)
++#define EP93XX_SYSCON_DEVCFG_I2SONSSP	(1<<7)
++#define EP93XX_SYSCON_DEVCFG_I2SONAC97	(1<<6)
++#define EP93XX_SYSCON_DEVCFG_RASONP3	(1<<4)
++#define EP93XX_SYSCON_DEVCFG_RAS	(1<<3)
++#define EP93XX_SYSCON_DEVCFG_ADCPD	(1<<2)
++#define EP93XX_SYSCON_DEVCFG_KEYS	(1<<1)
++#define EP93XX_SYSCON_DEVCFG_SHENA	(1<<0)
+ #define EP93XX_SYSCON_SWLOCK		EP93XX_SYSCON_REG(0xc0)
+ 
+ #define EP93XX_WATCHDOG_BASE		(EP93XX_APB_VIRT_BASE + 0x00140000)
+diff --git a/arch/arm/mach-ep93xx/include/mach/platform.h b/arch/arm/mach-ep93xx/include/mach/platform.h
+index 05f0f4f..8ed8fb6 100644
+--- a/arch/arm/mach-ep93xx/include/mach/platform.h
++++ b/arch/arm/mach-ep93xx/include/mach/platform.h
+@@ -15,9 +15,22 @@ struct ep93xx_eth_data
+ void ep93xx_map_io(void);
+ void ep93xx_init_irq(void);
+ void ep93xx_init_time(unsigned long);
++void ep93xx_syscon_swlocked_write(unsigned int reg, unsigned int val);
++void ep93xx_devcfg_set_clear(unsigned int set_bits, unsigned int clear_bits);
+ void ep93xx_register_eth(struct ep93xx_eth_data *data, int copy_addr);
+ void ep93xx_register_i2c(struct i2c_board_info *devices, int num);
+ void ep93xx_init_devices(void);
+ extern struct sys_timer ep93xx_timer;
+ 
++
++static inline void ep93xx_devcfg_set_bits(unsigned int bits)
++{
++	ep93xx_devcfg_set_clear(bits, 0x00);
++}
++
++static inline void ep93xx_devcfg_clear_bits(unsigned int bits)
++{
++	ep93xx_devcfg_set_clear(0x00, bits);
++}
++
+ #endif
+diff --git a/arch/arm/mach-ep93xx/include/mach/system.h b/arch/arm/mach-ep93xx/include/mach/system.h
+index 67789d0..8ffbe53 100644
+--- a/arch/arm/mach-ep93xx/include/mach/system.h
++++ b/arch/arm/mach-ep93xx/include/mach/system.h
+@@ -15,11 +15,11 @@ static inline void arch_reset(char mode)
+ 
+ 	local_irq_disable();
+ 
+-	devicecfg = __raw_readl(EP93XX_SYSCON_DEVICE_CONFIG);
+-	__raw_writel(0xaa, EP93XX_SYSCON_SWLOCK);
+-	__raw_writel(devicecfg | 0x80000000, EP93XX_SYSCON_DEVICE_CONFIG);
+-	__raw_writel(0xaa, EP93XX_SYSCON_SWLOCK);
+-	__raw_writel(devicecfg & ~0x80000000, EP93XX_SYSCON_DEVICE_CONFIG);
++	/*
++	 * Set then clear the SWRST bit to initiate a software reset
++	 */
++	ep93xx_devcfg_set_bits(EP93XX_SYSCON_DEVCFG_SWRST);
++	ep93xx_devcfg_clear_bits(EP93XX_SYSCON_DEVCFG_SWRST);
+ 
+ 	while (1)
+ 		;
+-- 
+1.6.2.1
+

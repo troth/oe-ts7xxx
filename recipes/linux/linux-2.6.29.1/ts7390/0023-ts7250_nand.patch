@@ -1,0 +1,52 @@
+From b8544dbc78999ec394f4c426996516ef28a4d01e Mon Sep 17 00:00:00 2001
+From: Matthieu Crapet <mcrapet@gmail.com>
+Date: Sun, 5 Apr 2009 15:12:37 +0200
+Subject: [PATCH 23/23] ts7250_nand
+
+---
+ drivers/mtd/nand/ts7250.c |   12 ++++++------
+ 1 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/mtd/nand/ts7250.c b/drivers/mtd/nand/ts7250.c
+index 2c410a0..5a59679 100644
+--- a/drivers/mtd/nand/ts7250.c
++++ b/drivers/mtd/nand/ts7250.c
+@@ -46,14 +46,14 @@ static struct mtd_partition partition_info32[] = {
+ 	{
+ 		.name		= "TS-BOOTROM",
+ 		.offset		= 0x00000000,
+-		.size		= 0x00004000,
++		.size		= 0x00020000,
+ 	}, {
+ 		.name		= "Linux",
+-		.offset		= 0x00004000,
++		.offset		= 0x00020000,
+ 		.size		= 0x01d00000,
+ 	}, {
+ 		.name		= "RedBoot",
+-		.offset		= 0x01d04000,
++		.offset		= 0x01d20000,
+ 		.size		= 0x002fc000,
+ 	},
+ };
+@@ -65,14 +65,14 @@ static struct mtd_partition partition_info128[] = {
+ 	{
+ 		.name		= "TS-BOOTROM",
+ 		.offset		= 0x00000000,
+-		.size		= 0x00004000,
++		.size		= 0x00020000,
+ 	}, {
+ 		.name		= "Linux",
+-		.offset		= 0x00004000,
++		.offset		= 0x00020000,
+ 		.size		= 0x07d00000,
+ 	}, {
+ 		.name		= "RedBoot",
+-		.offset		= 0x07d04000,
++		.offset		= 0x07d20000,
+ 		.size		= 0x002fc000,
+ 	},
+ };
+-- 
+1.6.2.1
+

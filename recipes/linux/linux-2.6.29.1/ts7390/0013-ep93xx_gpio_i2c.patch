@@ -1,0 +1,49 @@
+From 96b648ff41b69bbff244cef37789143c1e2ea643 Mon Sep 17 00:00:00 2001
+From: Matthieu Crapet <mcrapet@gmail.com>
+Date: Sun, 5 Apr 2009 14:30:14 +0200
+Subject: [PATCH 13/23] ep93xx_gpio_i2c
+
+---
+ arch/arm/mach-ep93xx/core.c |   12 ++++++++++++
+ 1 files changed, 12 insertions(+), 0 deletions(-)
+
+diff --git a/arch/arm/mach-ep93xx/core.c b/arch/arm/mach-ep93xx/core.c
+index 41a81ff..b204808 100644
+--- a/arch/arm/mach-ep93xx/core.c
++++ b/arch/arm/mach-ep93xx/core.c
+@@ -37,6 +37,8 @@
+ #include <linux/i2c.h>
+ #include <linux/i2c-gpio.h>
+ #include <linux/leds.h>
++#include <linux/i2c.h>
++#include <linux/i2c-gpio.h>
+ 
+ #include <asm/types.h>
+ #include <asm/setup.h>
+@@ -553,6 +555,15 @@ void __init ep93xx_register_eth(struct ep93xx_eth_data *data, int copy_addr)
+ 	platform_device_register(&ep93xx_eth_device);
+ }
+ 
++#ifdef CONFIG_MACH_TS72XX
++static struct i2c_gpio_platform_data ep93xx_i2c_data = {
++  .sda_pin		= EP93XX_GPIO_LINE_EGPIO14, // DIO_6 (TS72XX DIO 2x8 header)
++  .sda_is_open_drain	= 0,
++  .scl_pin		= EP93XX_GPIO_LINE_EGPIO15, // DIO_7 (TS72XX DIO 2x8 header)
++  .scl_is_open_drain	= 0,
++  .udelay			= 2,
++};
++#else
+ static struct i2c_gpio_platform_data ep93xx_i2c_data = {
+ 	.sda_pin		= EP93XX_GPIO_LINE_EEDAT,
+ 	.sda_is_open_drain	= 0,
+@@ -560,6 +571,7 @@ static struct i2c_gpio_platform_data ep93xx_i2c_data = {
+ 	.scl_is_open_drain	= 0,
+ 	.udelay			= 2,
+ };
++#endif
+ 
+ static struct platform_device ep93xx_i2c_device = {
+ 	.name			= "i2c-gpio",
+-- 
+1.6.2.1
+

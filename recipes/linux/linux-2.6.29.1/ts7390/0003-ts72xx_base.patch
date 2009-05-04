@@ -1,0 +1,477 @@
+From 8867d7ac51ca45359f4c63faa4a547352cd87a48 Mon Sep 17 00:00:00 2001
+From: Matthieu Crapet <mcrapet@gmail.com>
+Date: Sun, 5 Apr 2009 13:18:37 +0200
+Subject: [PATCH 03/23] ts72xx_base
+
+Added:
+ep93xx:core.c: build warning fix
+http://www.arm.linux.org.uk/developer/patches/viewpatch.php?id=5451/1
+---
+ arch/arm/Kconfig                                |    1 +
+ arch/arm/include/asm/memory.h                   |    2 +
+ arch/arm/mach-ep93xx/Kconfig                    |    9 +++
+ arch/arm/mach-ep93xx/core.c                     |    4 +-
+ arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h |   11 +++
+ arch/arm/mach-ep93xx/include/mach/memory.h      |   28 +++++++
+ arch/arm/mach-ep93xx/include/mach/system.h      |    2 -
+ arch/arm/mach-ep93xx/include/mach/ts72xx.h      |   86 ++++++++++++++++++++++-
+ arch/arm/mach-ep93xx/include/mach/uncompress.h  |   65 +++++++++++++++++
+ arch/arm/mach-ep93xx/ts72xx.c                   |   35 +++++++++-
+ arch/arm/mm/proc-arm920.S                       |    5 +-
+ 11 files changed, 239 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
+index dbfdf87..5535acf 100644
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -268,6 +268,7 @@ config ARCH_EP93XX
+ 	select CPU_ARM920T
+ 	select ARM_AMBA
+ 	select ARM_VIC
++	select ARCH_SPARSEMEM_ENABLE
+ 	select GENERIC_GPIO
+ 	select HAVE_CLK
+ 	select COMMON_CLKDEV
+diff --git a/arch/arm/include/asm/memory.h b/arch/arm/include/asm/memory.h
+index 0202a7c..67daae5 100644
+--- a/arch/arm/include/asm/memory.h
++++ b/arch/arm/include/asm/memory.h
+@@ -112,8 +112,10 @@
+  * private definitions which should NOT be used outside memory.h
+  * files.  Use virt_to_phys/phys_to_virt/__pa/__va instead.
+  */
++#ifndef __virt_to_phys
+ #define __virt_to_phys(x)	((x) - PAGE_OFFSET + PHYS_OFFSET)
+ #define __phys_to_virt(x)	((x) - PHYS_OFFSET + PAGE_OFFSET)
++#endif
+ 
+ /*
+  * Convert a physical address to a Page Frame Number and back
+diff --git a/arch/arm/mach-ep93xx/Kconfig b/arch/arm/mach-ep93xx/Kconfig
+index 56bddce..f06ef35 100644
+--- a/arch/arm/mach-ep93xx/Kconfig
++++ b/arch/arm/mach-ep93xx/Kconfig
+@@ -7,6 +7,15 @@ config CRUNCH
+ 	help
+ 	  Enable kernel support for MaverickCrunch.
+ 
++config CR1_NFBIT
++	bool "Turn on nF bit in ControlRegister 1"
++	help
++	  Say 'Y' here to force the nF bit on.  Usually this is set
++	  by the bootrom.  If it is not set, then the CPU core will
++	  run from HCLK instead of FCLK, and performance will suffer.
++	  If you see BogoMIPS of about 1/4 of your CPU clock, try
++	  turning this on; your performance should double.
++
+ comment "EP93xx Platforms"
+ 
+ config MACH_ADSSPHERE
+diff --git a/arch/arm/mach-ep93xx/core.c b/arch/arm/mach-ep93xx/core.c
+index 2560a6a..ed0e6b7 100644
+--- a/arch/arm/mach-ep93xx/core.c
++++ b/arch/arm/mach-ep93xx/core.c
+@@ -100,7 +100,7 @@ static unsigned int last_jiffy_time;
+ 
+ #define TIMER4_TICKS_PER_JIFFY		((CLOCK_TICK_RATE + (HZ/2)) / HZ)
+ 
+-static int ep93xx_timer_interrupt(int irq, void *dev_id)
++static irqreturn_t ep93xx_timer_interrupt(int irq, void *dev_id)
+ {
+ 	__raw_writel(1, EP93XX_TIMER1_CLEAR);
+ 	while ((signed long)
+@@ -576,8 +576,6 @@ extern void ep93xx_gpio_init(void);
+ 
+ void __init ep93xx_init_devices(void)
+ {
+-	unsigned int v;
+-
+ 	/* Disallow access to MaverickCrunch initially */
+ 	ep93xx_devcfg_clear_bits(EP93XX_SYSCON_DEVCFG_CPENA);
+ 
+diff --git a/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h b/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h
+index a55212d..a15296c 100644
+--- a/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h
++++ b/arch/arm/mach-ep93xx/include/mach/ep93xx-regs.h
+@@ -104,6 +104,8 @@
+ #define EP93XX_I2S_BASE			(EP93XX_APB_VIRT_BASE + 0x00020000)
+ 
+ #define EP93XX_SECURITY_BASE		(EP93XX_APB_VIRT_BASE + 0x00030000)
++#define EP93XX_SECURITY_REG(x)		(EP93XX_SECURITY_BASE + (x))
++#define EP93XX_SECURITY_UNIQID		EP93XX_SECURITY_REG(0x2440)
+ 
+ #define EP93XX_GPIO_BASE		(EP93XX_APB_VIRT_BASE + 0x00040000)
+ #define EP93XX_GPIO_REG(x)		(EP93XX_GPIO_BASE + (x))
+@@ -112,20 +114,28 @@
+ #define EP93XX_GPIO_F_INT_ACK		EP93XX_GPIO_REG(0x54)
+ #define EP93XX_GPIO_F_INT_ENABLE	EP93XX_GPIO_REG(0x58)
+ #define EP93XX_GPIO_F_INT_STATUS	EP93XX_GPIO_REG(0x5c)
++#define EP93XX_GPIO_F_INT_DEBOUNCE	EP93XX_GPIO_REG(0x64)
+ #define EP93XX_GPIO_A_INT_TYPE1		EP93XX_GPIO_REG(0x90)
+ #define EP93XX_GPIO_A_INT_TYPE2		EP93XX_GPIO_REG(0x94)
+ #define EP93XX_GPIO_A_INT_ACK		EP93XX_GPIO_REG(0x98)
+ #define EP93XX_GPIO_A_INT_ENABLE	EP93XX_GPIO_REG(0x9c)
++#define EP93XX_GPIO_A_INT_DEBOUNCE	EP93XX_GPIO_REG(0xa8)
+ #define EP93XX_GPIO_A_INT_STATUS	EP93XX_GPIO_REG(0xa0)
+ #define EP93XX_GPIO_B_INT_TYPE1		EP93XX_GPIO_REG(0xac)
+ #define EP93XX_GPIO_B_INT_TYPE2		EP93XX_GPIO_REG(0xb0)
+ #define EP93XX_GPIO_B_INT_ACK		EP93XX_GPIO_REG(0xb4)
+ #define EP93XX_GPIO_B_INT_ENABLE	EP93XX_GPIO_REG(0xb8)
+ #define EP93XX_GPIO_B_INT_STATUS	EP93XX_GPIO_REG(0xbc)
++#define EP93XX_GPIO_B_INT_DEBOUNCE	EP93XX_GPIO_REG(0xc4)
++
++#define EP93XX_GPIO_A_DATA		EP93XX_GPIO_REG(0x00)
++#define EP93XX_GPIO_A_DIRECTION		EP93XX_GPIO_REG(0x10)
++#define EP93XX_GPIO_B_DATA		EP93XX_GPIO_REG(0x04)
+ 
+ #define EP93XX_AAC_BASE			(EP93XX_APB_VIRT_BASE + 0x00080000)
+ 
+ #define EP93XX_SPI_BASE			(EP93XX_APB_VIRT_BASE + 0x000a0000)
++#define EP93XX_SPI_PHYS_BASE	(EP93XX_APB_PHYS_BASE + 0x000a0000)
+ 
+ #define EP93XX_IRDA_BASE		(EP93XX_APB_VIRT_BASE + 0x000b0000)
+ 
+@@ -188,6 +198,7 @@
+ #define EP93XX_SYSCON_DEVCFG_ADCPD	(1<<2)
+ #define EP93XX_SYSCON_DEVCFG_KEYS	(1<<1)
+ #define EP93XX_SYSCON_DEVCFG_SHENA	(1<<0)
++#define EP93XX_SYSCON_CHIPID		EP93XX_SYSCON_REG(0x94)
+ #define EP93XX_SYSCON_SWLOCK		EP93XX_SYSCON_REG(0xc0)
+ 
+ #define EP93XX_WATCHDOG_BASE		(EP93XX_APB_VIRT_BASE + 0x00140000)
+diff --git a/arch/arm/mach-ep93xx/include/mach/memory.h b/arch/arm/mach-ep93xx/include/mach/memory.h
+index 5c80c3c..1866141 100644
+--- a/arch/arm/mach-ep93xx/include/mach/memory.h
++++ b/arch/arm/mach-ep93xx/include/mach/memory.h
+@@ -7,4 +7,32 @@
+ 
+ #define PHYS_OFFSET		UL(0x00000000)
+ 
++/*
++ * Non-linear mapping like so:
++ * phys       => virt
++ * 0x00000000 => 0xc0000000
++ * 0x01000000 => 0xc1000000
++ * 0x04000000 => 0xc4000000
++ * 0x05000000 => 0xc5000000
++ * 0xe0000000 => 0xc8000000
++ * 0xe1000000 => 0xc9000000
++ * 0xe4000000 => 0xcc000000
++ * 0xe5000000 => 0xcd000000
++ *
++ * As suggested here: http://marc.info/?l=linux-arm&m=122754446724900&w=2
++ *
++ * Note that static inline functions won't work here because
++ * arch/arm/include/asm/memory.h uses "#ifndef __virt_to_phys" to check whether to
++ * use generic functions or not.
++ */
++
++#define __phys_to_virt(p)   \
++            (((p) & 0x07ffffff) | (((p) & 0xe0000000) ? 0x08000000 : 0) | PAGE_OFFSET)
++
++#define __virt_to_phys(v)   \
++            (((v) & 0x07ffffff) | (((v) & 0x08000000) ? 0xe0000000 : 0 ))
++
++#define SECTION_SIZE_BITS 24
++#define MAX_PHYSMEM_BITS 32
++
+ #endif
+diff --git a/arch/arm/mach-ep93xx/include/mach/system.h b/arch/arm/mach-ep93xx/include/mach/system.h
+index 8ffbe53..9af1fc7 100644
+--- a/arch/arm/mach-ep93xx/include/mach/system.h
++++ b/arch/arm/mach-ep93xx/include/mach/system.h
+@@ -11,8 +11,6 @@ static inline void arch_idle(void)
+ 
+ static inline void arch_reset(char mode)
+ {
+-	u32 devicecfg;
+-
+ 	local_irq_disable();
+ 
+ 	/*
+diff --git a/arch/arm/mach-ep93xx/include/mach/ts72xx.h b/arch/arm/mach-ep93xx/include/mach/ts72xx.h
+index 34ddec0..3408551 100644
+--- a/arch/arm/mach-ep93xx/include/mach/ts72xx.h
++++ b/arch/arm/mach-ep93xx/include/mach/ts72xx.h
+@@ -8,12 +8,23 @@
+  * virt		phys		size
+  * febff000	22000000	4K	model number register
+  * febfe000	22400000	4K	options register
+- * febfd000	22800000	4K	options register #2
++ * febfd000	22800000	4K	options register #2 (JP6 and TS-9420 flags)
+  * febfc000	[67]0000000	4K	NAND data register
+  * febfb000	[67]0400000	4K	NAND control register
+  * febfa000	[67]0800000	4K	NAND busy register
+  * febf9000	10800000	4K	TS-5620 RTC index register
+  * febf8000	11700000	4K	TS-5620 RTC data register
++ * febf7000	23800000	4K	CPLD watchdog (control register)
++ * febf6000	23c00000	4K	CPLD watchdog (feed register)
++ * febf5000	23400000	4K	PLD version (3 bits)
++ * febf4000	22c00000	4K	RS-485 control register
++ * febf3000	23000000	4K	RS-485 mode register
++ * febf2000	10800000	4K	jumpers/max197 busy bit/COM1 dcd register (8-bit, read only)
++ * febf1000	10f00000	4K	max197 sample/control register (16-bit read/8-bit write)
++ * febf0000	11e00000	4K	PC/104 8-bit I/O
++ * febef000	21e00000	4K	PC/104 16-bit I/O
++ * fea00000	11a00000	1MB	PC/104 8-bit memory
++ * fe900000	21a00000	1MB	PC/104 16-bit memory
+  */
+ 
+ #define TS72XX_MODEL_PHYS_BASE		0x22000000
+@@ -59,7 +70,6 @@
+ #define TS72XX_NAND_BUSY_VIRT_BASE	0xfebfa000
+ #define TS72XX_NAND_BUSY_SIZE		0x00001000
+ 
+-
+ #define TS72XX_RTC_INDEX_VIRT_BASE	0xfebf9000
+ #define TS72XX_RTC_INDEX_PHYS_BASE	0x10800000
+ #define TS72XX_RTC_INDEX_SIZE		0x00001000
+@@ -68,6 +78,61 @@
+ #define TS72XX_RTC_DATA_PHYS_BASE	0x11700000
+ #define TS72XX_RTC_DATA_SIZE		0x00001000
+ 
++#define TS72XX_WATCHDOG_CONTROL_VIRT_BASE	0xfebf7000
++#define TS72XX_WATCHDOG_CONTROL_PHYS_BASE	0x23800000
++#define TS72XX_WATCHDOG_CONTROL_SIZE	0x00001000
++
++#define TS72XX_WATCHDOG_FEED_VIRT_BASE	0xfebf6000
++#define TS72XX_WATCHDOG_FEED_PHYS_BASE	0x23c00000
++#define TS72XX_WATCHDOG_FEED_SIZE	0x00001000
++
++#define TS72XX_PLD_VERSION_VIRT_BASE	0xfebf5000
++#define TS72XX_PLD_VERSION_PHYS_BASE	0x23400000
++#define TS72XX_PLD_VERSION_SIZE	0x00001000
++
++#define TS72XX_RS485_CONTROL_VIRT_BASE	0xfebf4000
++#define TS72XX_RS485_CONTROL_PHYS_BASE	0x22c00000
++#define TS72XX_RS485_CONTROL_SIZE	0x00001000
++
++#define TS72XX_RS485_MODE_VIRT_BASE	0xfebf3000
++#define TS72XX_RS485_MODE_PHYS_BASE	0x23000000
++#define TS72XX_RS485_MODE_SIZE	0x00001000
++
++#define TS72XX_JUMPERS_MAX197_VIRT_BASE	0xfebf2000
++#define TS72XX_JUMPERS_MAX197_PHYS_BASE	0x10800000
++#define TS72XX_JUMPERS_MAX197_SIZE	0x00001000
++
++#define TS72XX_MAX197_SAMPLE_VIRT_BASE	0xfebf1000
++#define TS72XX_MAX197_SAMPLE_PHYS_BASE	0x10f00000
++#define TS72XX_MAX197_SAMPLE_SIZE	0x00001000
++
++
++#define TS72XX_PC104_8BIT_IO_VIRT_BASE  0xfebf0000
++#define TS72XX_PC104_8BIT_IO_PHYS_BASE  0x11e00000
++#define TS72XX_PC104_8BIT_IO_SIZE       0x00001000
++#define TS72XX_PC104_8BIT_MEM_VIRT_BASE 0xfea00000
++#define TS72XX_PC104_8BIT_MEM_PHYS_BASE 0x11a00000
++#define TS72XX_PC104_8BIT_MEM_SIZE      0x00100000
++
++#define TS72XX_PC104_16BIT_IO_VIRT_BASE  0xfebef000
++#define TS72XX_PC104_16BIT_IO_PHYS_BASE  0x21e00000
++#define TS72XX_PC104_16BIT_IO_SIZE       0x00001000
++#define TS72XX_PC104_16BIT_MEM_VIRT_BASE 0xfe900000
++#define TS72XX_PC104_16BIT_MEM_PHYS_BASE 0x21a00000
++#define TS72XX_PC104_16BIT_MEM_SIZE      0x00100000
++
++/*
++ * TS7200 CF memory map:
++ *
++ * phys		size	description
++ * 11000000	7	CF registers (8-bit each), starting at 11000001
++ * 10400006	2	CF aux registers (8-bit)
++ * 21000000	2	CF data register (16-bit)
++ */
++
++#define TS7200_CF_CMD_PHYS_BASE  0x11000000
++#define TS7200_CF_AUX_PHYS_BASE  0x10400006
++#define TS7200_CF_DATA_PHYS_BASE 0x21000000
+ 
+ #ifndef __ASSEMBLY__
+ #include <linux/io.h>
+@@ -98,4 +163,21 @@ static inline int is_ts9420_installed(void)
+ 	return !!(__raw_readb(TS72XX_OPTIONS2_VIRT_BASE) &
+ 					TS72XX_OPTIONS2_TS9420);
+ }
++
++static inline int is_rs485_installed(void)
++{
++	return !!(__raw_readb(TS72XX_OPTIONS_VIRT_BASE) &
++					TS72XX_OPTIONS_COM2_RS485);
++}
++
++static inline int get_ts72xx_pld_version(void)
++{
++	return (__raw_readb(TS72XX_PLD_VERSION_VIRT_BASE) & 0x7);
++}
++
++static inline int is_jp6_set(void)
++{
++	return (__raw_readb(TS72XX_OPTIONS2_VIRT_BASE) & 0x1);
++}
++
+ #endif
+diff --git a/arch/arm/mach-ep93xx/include/mach/uncompress.h b/arch/arm/mach-ep93xx/include/mach/uncompress.h
+index 16026c2..b3a902f 100644
+--- a/arch/arm/mach-ep93xx/include/mach/uncompress.h
++++ b/arch/arm/mach-ep93xx/include/mach/uncompress.h
+@@ -86,9 +86,74 @@ static void ethernet_reset(void)
+ }
+ 
+ 
++/*
++ * We don't have clock management for the UARTs (amba-pl010)
++ * yet, so hackily enable all UART clocks here for now.
++ */
++#define PHYS_SYSCON_DEVICE_CONFIG	0x80930080
++#define PHYS_SYSCON_SWLOCK		0x809300c0
++
++static void enable_all_uart_clocks(void)
++{
++	unsigned int v;
++
++	v = __raw_readl(PHYS_SYSCON_DEVICE_CONFIG);
++	__raw_writel(0xaa, PHYS_SYSCON_SWLOCK);
++	__raw_writel(v | 0x01140000, PHYS_SYSCON_DEVICE_CONFIG);
++}
++
++
++/*
++ * Some bootloaders don't turn on the UARTBAUD bit, which means that
++ * the UARTs will be running off a divided 7.3728 MHz clock instead of
++ * the 14.7456 MHz peripheral clock when linux boots.
++ *
++ * We detect that condition here and fix it by turning on UARTBAUD, and
++ * then reprogramming the divisors on all enabled UARTs to twice what
++ * they were before we turned UARTBAUD on, to preserve the programmed
++ * baud rate.
++ */
++#define PHYS_SYSCON_CLOCK_CONTROL	0x80930004
++#define SYSCON_CLOCK_UARTBAUD		0x20000000
++#define PHYS_UART1_BASE			0x808c0000
++#define PHYS_UART2_BASE			0x808d0000
++#define PHYS_UART3_BASE			0x808e0000
++
++static void uart_divisor_times_two(unsigned int base)
++{
++	u16 divisor;
++
++	divisor = __raw_readb(base + 0x0c) << 8;
++	divisor |= __raw_readb(base + 0x10);
++	if (divisor) {
++		divisor = (2 * (divisor + 1)) - 1;
++		__raw_writeb(divisor >> 8, base + 0x0c);
++		__raw_writeb(divisor & 0xff, base + 0x10);
++		__raw_writeb(__raw_readb(base + 0x08), base + 0x08);
++	}
++}
++
++static void fix_uart_base(void)
++{
++	unsigned int v;
++
++	v = __raw_readl(PHYS_SYSCON_CLOCK_CONTROL);
++	if ((v & SYSCON_CLOCK_UARTBAUD) == 0) {
++		v |= SYSCON_CLOCK_UARTBAUD;
++		__raw_writel(v, PHYS_SYSCON_CLOCK_CONTROL);
++
++		uart_divisor_times_two(PHYS_UART1_BASE);
++		uart_divisor_times_two(PHYS_UART2_BASE);
++		uart_divisor_times_two(PHYS_UART3_BASE);
++	}
++}
++
++
+ static void arch_decomp_setup(void)
+ {
+ 	ethernet_reset();
++	enable_all_uart_clocks();
++	fix_uart_base();
+ }
+ 
+ #define arch_decomp_wdog()
+diff --git a/arch/arm/mach-ep93xx/ts72xx.c b/arch/arm/mach-ep93xx/ts72xx.c
+index 7ee024d..3dbae74 100644
+--- a/arch/arm/mach-ep93xx/ts72xx.c
++++ b/arch/arm/mach-ep93xx/ts72xx.c
+@@ -52,7 +52,36 @@ static struct map_desc ts72xx_io_desc[] __initdata = {
+ 		.pfn		= __phys_to_pfn(TS72XX_RTC_DATA_PHYS_BASE),
+ 		.length		= TS72XX_RTC_DATA_SIZE,
+ 		.type		= MT_DEVICE,
+-	}
++	},
++	/* Use this for debug only. Each device will map its own PC/104 address space */
++	///* PC/104 (8-bit) I/O bus */
++	//{
++	//  .virtual  = TS72XX_PC104_8BIT_IO_VIRT_BASE,
++	//  .pfn    = __phys_to_pfn(TS72XX_PC104_8BIT_IO_PHYS_BASE),
++	//  .length   = TS72XX_PC104_8BIT_IO_SIZE,
++	//  .type   = MT_DEVICE,
++	//},
++	///* PC/104 (16-bit) I/O bus */
++	//{
++	//  .virtual  = TS72XX_PC104_16BIT_IO_VIRT_BASE,
++	//  .pfn    = __phys_to_pfn(TS72XX_PC104_16BIT_IO_PHYS_BASE),
++	//  .length   = TS72XX_PC104_16BIT_IO_SIZE,
++	//  .type   = MT_DEVICE,
++	//},
++	///* PC/104 (8-bit) MEM bus */
++	//{
++	//  .virtual  = TS72XX_PC104_8BIT_MEM_VIRT_BASE,
++	//  .pfn    = __phys_to_pfn(TS72XX_PC104_8BIT_MEM_PHYS_BASE),
++	//  .length   = TS72XX_PC104_8BIT_MEM_SIZE,
++	//  .type   = MT_DEVICE,
++	//},
++	///* PC/104 (16-bit) MEM bus */
++	//{
++	//  .virtual  = TS72XX_PC104_16BIT_MEM_VIRT_BASE,
++	//  .pfn    = __phys_to_pfn(TS72XX_PC104_16BIT_MEM_PHYS_BASE),
++	//  .length   = TS72XX_PC104_16BIT_MEM_SIZE,
++	//  .type   = MT_DEVICE,
++	//}
+ };
+ 
+ static struct map_desc ts72xx_nand_io_desc[] __initdata = {
+@@ -112,6 +141,8 @@ static void __init ts72xx_map_io(void)
+ 	}
+ }
+ 
++/* NOR flash (TS-7200 only) */
++
+ static struct physmap_flash_data ts72xx_flash_data = {
+ 	.width		= 1,
+ };
+@@ -132,6 +163,8 @@ static struct platform_device ts72xx_flash = {
+ 	.resource	= &ts72xx_flash_resource,
+ };
+ 
++/* Real time clock  */
++
+ static unsigned char ts72xx_rtc_readbyte(unsigned long addr)
+ {
+ 	__raw_writeb(addr, TS72XX_RTC_INDEX_VIRT_BASE);
+diff --git a/arch/arm/mm/proc-arm920.S b/arch/arm/mm/proc-arm920.S
+index 914d688..a42fcb4 100644
+--- a/arch/arm/mm/proc-arm920.S
++++ b/arch/arm/mm/proc-arm920.S
+@@ -198,7 +198,7 @@ ENTRY(arm920_coherent_kern_range)
+  */
+ ENTRY(arm920_coherent_user_range)
+ 	bic	r0, r0, #CACHE_DLINESIZE - 1
+-1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
++1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
+ 	mcr	p15, 0, r0, c7, c5, 1		@ invalidate I entry
+ 	add	r0, r0, #CACHE_DLINESIZE
+ 	cmp	r0, r1
+@@ -373,6 +373,9 @@ __arm920_setup:
+ 	mrc	p15, 0, r0, c1, c0		@ get control register v4
+ 	bic	r0, r0, r5
+ 	orr	r0, r0, r6
++#ifdef CONFIG_CR1_NFBIT
++        orr     r0, r0, #0x40000000             @ set nF
++#endif
+ 	mov	pc, lr
+ 	.size	__arm920_setup, . - __arm920_setup
+ 
+-- 
+1.6.2.1
+
