@@ -9,6 +9,7 @@ SRC_URI += "\
   file://ts.conf-collie-2.4 \
   file://ts.conf-simpad-2.4 \
   file://tslib.sh \
+  file://verbose.patch;patch=1 \
 "
 SRC_URI_append_mnci += "\
   file://devfs.patch;patch=1 \

@@ -1,0 +1,62 @@
+diff --git a/plugins/input-raw.c b/plugins/input-raw.c
+index 9659eac..00d9a8f 100644
+--- a/plugins/input-raw.c
++++ b/plugins/input-raw.c
+@@ -51,21 +51,48 @@ static int check_fd(struct tslib_input *i)
+ 	u_int32_t bit;
+ 	u_int64_t absbit;
+ 
+-	if (! ((ioctl(ts->fd, EVIOCGVERSION, &version) >= 0) &&
+-		(version == EV_VERSION) &&
+-		(ioctl(ts->fd, EVIOCGBIT(0, sizeof(bit) * 8), &bit) >= 0) &&
+-		(bit & (1 << EV_ABS)) &&
+-		(ioctl(ts->fd, EVIOCGBIT(EV_ABS, sizeof(absbit) * 8), &absbit) >= 0) &&
+-		(absbit & (1 << ABS_X)) &&
+-		(absbit & (1 << ABS_Y)) && (absbit & (1 << ABS_PRESSURE)))) {
+-		fprintf(stderr, "selected device is not a touchscreen I understand\n");
+-		return -1;
++	if (ioctl(ts->fd, EVIOCGVERSION, &version) < 0) {
++		fprintf(stderr, "ioctl failed: EVIOCGVERSION\n");
++		goto FAILED;
++	}
++	if (version != EV_VERSION) {
++		fprintf(stderr, "Bad EV_VERSION: %d != %d\n", version,
++		       EV_VERSION);
++		goto FAILED;
++	}
++	if (ioctl(ts->fd, EVIOCGBIT(0, sizeof(bit) * 8), &bit) < 0) {
++		fprintf(stderr, "ioctl failed: EVIOCGBIT (EV_ABS)\n");
++		goto FAILED;
++	}
++	if (!(bit & (1 << EV_ABS))) {
++		fprintf(stderr, "EV_ABS bit not set\n");
++		goto FAILED;
++	}
++	if (ioctl(ts->fd, EVIOCGBIT(EV_ABS, sizeof(absbit) * 8), &absbit) < 0) {
++		fprintf(stderr, "ioctl failed: get X, Y & Pressure\n");
++		goto FAILED;
++	}
++	if (!(absbit & (1 << ABS_X))) {
++		fprintf(stderr, "x failed\n");
++		goto FAILED;
++	}
++	if (!(absbit & (1 << ABS_Y))) {
++		fprintf(stderr, "y failed\n");
++		goto FAILED;
++	}
++	if (!(absbit & (1 << ABS_PRESSURE))) {
++		fprintf(stderr, "pressure failed\n");
++		goto FAILED;
+ 	}
+ 
+ 	if (bit & (1 << EV_SYN))
+ 		i->using_syn = 1;
+ 
+ 	return 0;
++
++FAILED:
++	fprintf(stderr, "selected device is not a touchscreen I understand\n");
++	return -1;
+ }
+ 
+ static int ts_input_read(struct tslib_module_info *inf,
