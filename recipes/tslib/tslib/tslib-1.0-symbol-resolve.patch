@@ -1,0 +1,27 @@
+Some plugins use tslib functions. Link those plugins against libts. Without
+this change DirectFB in unable to use tslib because symbols in the tslib
+plugins can't be resolved.
+
+https://lists.berlios.de/pipermail/tslib-general/attachments/20070217/fbdca453/attachment.ksh
+--- tslib-1.0-orig/plugins/Makefile.am	2009-05-13 10:27:48.000000000 -0700
++++ tslib-1.0/plugins/Makefile.am	2009-05-13 10:28:59.000000000 -0700
+@@ -107,15 +107,19 @@
+   
+ variance_la_SOURCES	= variance.c
+ variance_la_LDFLAGS	= -module $(LTVSN)
++variance_la_LIBADD	= $(top_builddir)/src/libts.la
+   
+ dejitter_la_SOURCES	= dejitter.c
+ dejitter_la_LDFLAGS	= -module $(LTVSN)
++dejitter_la_LIBADD	= $(top_builddir)/src/libts.la
+   
+ linear_la_SOURCES	= linear.c
+ linear_la_LDFLAGS	= -module $(LTVSN)
++linear_la_LIBADD	= $(top_builddir)/src/libts.la
+ 
+ pthres_la_SOURCES	= pthres.c
+ pthres_la_LDFLAGS	= -module $(LTVSN)
++pthres_la_LIBADD	= $(top_builddir)/src/libts.la
+ 
+ # hw access
+ corgi_la_SOURCES	= corgi-raw.c
