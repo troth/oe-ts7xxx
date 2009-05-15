@@ -1,0 +1,59 @@
+From 6bd2ac6fa930da6529a24b9196a04919431983b6 Mon Sep 17 00:00:00 2001
+From: Theodore A. Roth <troth@openavr.org>
+Date: Fri, 15 May 2009 11:14:57 -0700
+Subject: [PATCH] Report dummy pressure information for tslib compatibility.
+
+* Tslib requires pressure info to be reported by the touch screen driver. This
+  hack forces the ts_lcd touchscreen input driver to report pressure events
+  every time the screen is touched.
+---
+ drivers/input/touchscreen/ts_lcd.c |   12 ++++++++++++
+ 1 files changed, 12 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/input/touchscreen/ts_lcd.c b/drivers/input/touchscreen/ts_lcd.c
+index 82e98f4..e2db9f6 100644
+--- a/drivers/input/touchscreen/ts_lcd.c
++++ b/drivers/input/touchscreen/ts_lcd.c
+@@ -110,6 +110,7 @@ static void tslcd_sample(unsigned long data)
+   static unsigned short last_y = 0;
+   static unsigned short x,y;
+   static int bounce=DEBOUNCE_MS;
++  static unsigned short pressure_fuzz;
+ 
+   spin_lock(&tslcd_lock);
+   x = tslcd_readX();
+@@ -121,6 +122,7 @@ static void tslcd_sample(unsigned long data)
+     bounce = DEBOUNCE_MS;
+     //printk("sample none\n");
+     input_report_key(tslcd_dev, BTN_TOUCH, 0);
++    input_report_key(tslcd_dev, ABS_PRESSURE, 0);
+   } else {
+     if (bounce > 0) {
+       bounce--;
+@@ -129,6 +131,13 @@ static void tslcd_sample(unsigned long data)
+       input_report_key(tslcd_dev, BTN_TOUCH, 1);
+       input_report_abs(tslcd_dev, ABS_X, x);
+       input_report_abs(tslcd_dev, ABS_Y, y);
++
++      /*
++       * Need to force a change on the reported pressure otherwise tslib will
++       * not work.
++       */
++      input_report_abs(tslcd_dev, ABS_PRESSURE, 4000 + pressure_fuzz);
++      pressure_fuzz = pressure_fuzz ? 0 : 1;
+     }
+   }
+   last_x = x;
+@@ -274,6 +283,9 @@ static int __init tslcd_init(void)
+   input_set_abs_params(tslcd_dev, ABS_X, 0, 4096, 0, 0);
+   input_set_abs_params(tslcd_dev, ABS_Y, 0, 4096, 0, 0);
+ 
++  /* Pressure is reported to make tslib happy, otherwise it is not needed. */
++  input_set_abs_params(tslcd_dev, ABS_PRESSURE, 0, 4096, 0, 0);
++
+   err = input_register_device(tslcd_dev);
+   if (err)
+     goto fail2;
+-- 
+1.5.4.3
+

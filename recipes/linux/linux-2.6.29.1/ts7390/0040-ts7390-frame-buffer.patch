@@ -1,0 +1,703 @@
+From 679c9e8918e192bc39f062294037e0c5ad0110b4 Mon Sep 17 00:00:00 2001
+From: Theodore A. Roth <troth@openavr.org>
+Date: Fri, 15 May 2009 10:57:25 -0700
+Subject: [PATCH] Add frame buffer support for ts7350/ts7370/ts7390 boards.
+
+* These files were pulled directly from the 2.6.21 kernel supplied by
+  Technologic System. Only minor modifications were made to work with 2.6.29.1.
+---
+ drivers/video/Kconfig    |    8 +
+ drivers/video/Makefile   |    1 +
+ drivers/video/ts7370fb.c |  590 ++++++++++++++++++++++++++++++++++++++++++++++
+ drivers/video/ts7370fb.h |   51 ++++
+ 4 files changed, 650 insertions(+), 0 deletions(-)
+ create mode 100644 drivers/video/ts7370fb.c
+ create mode 100644 drivers/video/ts7370fb.h
+
+diff --git a/drivers/video/Kconfig b/drivers/video/Kconfig
+index fb19803..caa8156 100644
+--- a/drivers/video/Kconfig
++++ b/drivers/video/Kconfig
+@@ -1960,6 +1960,14 @@ config FB_SM501
+ 
+ 	  If unsure, say N.
+ 
++config FB_TS7370
++	tristate "TS-7350 and TS-7370 framebuffer support"
++	depends on FB && MACH_TS72XX
++	select FB_CFB_FILLRECT
++	select FB_CFB_COPYAREA
++	select FB_CFB_IMAGEBLIT
++	---help---
++	  Say Y here to enable support for TS-7350 and TS-7370 framebuffer.
+ 
+ config FB_PNX4008_DUM
+ 	tristate "Display Update Module support on Philips PNX4008 board"
+diff --git a/drivers/video/Makefile b/drivers/video/Makefile
+index 2a998ca..ec6d901 100644
+--- a/drivers/video/Makefile
++++ b/drivers/video/Makefile
+@@ -123,6 +123,7 @@ obj-$(CONFIG_FB_OMAP)             += omap/
+ obj-$(CONFIG_XEN_FBDEV_FRONTEND)  += xen-fbfront.o
+ obj-$(CONFIG_FB_CARMINE)          += carminefb.o
+ obj-$(CONFIG_FB_MB862XX)	  += mb862xx/
++obj-$(CONFIG_FB_TS7370)		  += ts7370fb.o
+ 
+ # Platform or fallback drivers go here
+ obj-$(CONFIG_FB_UVESA)            += uvesafb.o
+diff --git a/drivers/video/ts7370fb.c b/drivers/video/ts7370fb.c
+new file mode 100644
+index 0000000..32697d7
+--- /dev/null
++++ b/drivers/video/ts7370fb.c
+@@ -0,0 +1,590 @@
++/*
++ * linux/drivers/video/ts7370fb.c
++ *
++ * Framebuffer device for the TS-7370 board.
++ *
++ * Based on the TS-7KV FB driver by Michael Schmidt <michael@embeddedARM.com>
++ * Based on TS-7300 FB driver By Fotis Loukos <fotisl@csd.auth.gr>
++ *
++ * Based on skeletonfb.c for new api by James Simmons and the original driver
++ * for the 2.4 series by Eddie Dawydiuk.
++ */
++
++#include <linux/module.h>
++#include <linux/kernel.h>
++#include <linux/errno.h>
++#include <linux/string.h>
++#include <linux/mm.h>
++#include <linux/slab.h>
++#include <linux/delay.h>
++#include <linux/fb.h>
++#include <linux/init.h>
++#include <linux/platform_device.h>
++#include "ts7370fb.h"
++
++
++/* The width and height below may change. */
++static struct fb_fix_screeninfo ts7370fb_fix __devinitdata = {
++    .id             = "TS7370",
++    .type           = FB_TYPE_PACKED_PIXELS,
++    .accel          = FB_ACCEL_NONE,
++    .smem_start     = MEM16_BASE,
++    .mmio_start     = IO16_BASE,
++    .mmio_len       = 10,
++    .visual         = FB_VISUAL_MONO10,
++};
++
++static struct fb_var_screeninfo ts7370fb_var __devinitdata = {
++    /* TS7370_DEF_WIDTH, TS7370_DEF_HEIGHT, TS7370_DEF_WIDTH, TS7370_DEF_HEIGHT,*/
++    0, 0, 0, 0,
++    0, 0, TS7370_BPP, 0,
++    { 11, 5, 0 }, { 5, 5, 0 }, { 0, 5, 0 }, { 0, 0, 0 },
++    0, FB_ACTIVATE_NOW, -1, -1, FB_ACCEL_NONE,
++    31746, 128, 24, 28, 9, 40, 3, 0, FB_VMODE_NONINTERLACED, 0
++};
++
++static struct platform_device *ts7370fb_device;
++
++/*
++ * Set a color register. There is no hardware palette so we use the pseudo_palette
++ * we allocated. The only format supported is 16bit 555.
++ */
++static int ts7370fb_setcolreg(unsigned regno, unsigned red, unsigned green,
++			   unsigned blue, unsigned transp,
++			   struct fb_info *info)
++{
++    u16 v;
++
++    if(regno >= PALETTE_COLORS)
++       return -EINVAL;
++
++    if(info->var.grayscale)
++       red = green = blue = (red * 77 + green * 151 + blue * 28) >> 8;
++
++    /* It's 555 with an unused bit between green and blue. */
++    v = ((red & 0xf800) >> 0) | ((green & 0xf800) >> 5) |
++        ((blue & 0xf800) >> 11);
++
++    ((u16 *)(info->pseudo_palette))[regno] = v;
++
++    return 0;
++}
++
++
++inline void ts7370_access_begin(struct ts7370fb_par *par) {
++}
++
++inline void ts7370_access_end(struct ts7370fb_par *par) {
++}
++
++/*
++ * Blank the display. This is supported by the hardware accelarator.
++ * However - we do nothing.   Something seems to be broken in that
++ * we have been unable to disable screen blanking.  This is
++ * unacceptable in embedded systems without a keyboard.
++ */
++static int ts7370fb_blank(int blank_mode, struct fb_info *info)
++{
++
++/*
++    u16 vidctrl, newctrl;
++    struct ts7370fb_par *par = info->par;
++
++    //printk(KERN_DEBUG "ts7370fb: Using hardware accelerated blank.\n");
++
++    ts7370_access_begin(par);
++    vidctrl = ioread16(par->fpga_regs + VIDCTRL);
++
++    switch(blank_mode) {
++    case FB_BLANK_UNBLANK:
++    case FB_BLANK_NORMAL:
++        newctrl = vidctrl | 0x300;
++        break;
++    case FB_BLANK_HSYNC_SUSPEND:
++        newctrl = (vidctrl | 0x100) & ~0x200;
++        break;
++    case FB_BLANK_VSYNC_SUSPEND:
++        newctrl = (vidctrl | 0x200) & ~0x100;
++        break;
++    case FB_BLANK_POWERDOWN:
++        newctrl = vidctrl & ~0x300;
++        break;
++    default:
++        return !0;
++        break;
++    }
++
++    iowrite16(newctrl, par->fpga_regs + VIDCTRL);
++*/
++    /* Blanking is done by filling the whole screen with black color. */
++/*
++    if(blank_mode != FB_BLANK_UNBLANK) {
++        vidctrl = ioread16(par->fpga_regs + VIDCTRL);
++        vidctrl = (vidctrl & 0xff7f) | (1 << 6);
++        iowrite16(vidctrl, par->fpga_regs + VIDCTRL);
++        iowrite16(((par->width - 1) >> 7) << 13, par->fpga_regs + BLTCTRL);
++        iowrite16((par->height & 0x1ff) | ((par->width - 1) << 9),
++                par->fpga_regs + BLTSZ);
++        iowrite16(0, par->fpga_regs + SRCBLT);
++*/
++        /*
++         * Use a write memory barrier to ensure that everything is written
++         * before writting to the DSTBLT register. Order is important!
++         */
++/*
++        wmb();
++        iowrite16(0, par->fpga_regs + DSTBLT);
++*/
++	/* removed, as it can cause a soft lockup
++      while(((u16 *) par->fpga_regs)[VIDCTRL] & 0x400)
++            cpu_relax();
++	*/
++/*
++    }
++    ts7370_access_end(par);
++*/
++    return 0;
++}
++
++/*
++ * Fill a rectangle with a color. Supported by the hardware accelerator.
++ */
++void ts7370fb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
++{
++    struct ts7370fb_par *par = info->par;
++    u16 vidctrl;
++    u32 dst;
++
++    if(info->state != FBINFO_STATE_RUNNING)
++        return;
++
++    /*
++     * If hardware acceleration is disabled then we use the default unaccelerated
++     * function for filling rectangles.
++     */
++    //printk("debug: info->flags=%X,  FBINFO_HWACCEL_DISABLED=%X\n",info->flags,FBINFO_HWACCEL_DISABLED);
++    if(info->flags & FBINFO_HWACCEL_DISABLED) {
++        cfb_fillrect(info, rect);
++        return;
++    }
++
++    //printk(KERN_DEBUG "ts7370fb: Using hardware accelerated fillrect.\n");
++
++    /* Convert to the address needed by the accelerator. */
++    dst = rect->dy * par->width + rect->dx;
++
++    ts7370_access_begin(par);
++    vidctrl = ioread16(par->fpga_regs + VIDCTRL) | (1 << 6);
++    iowrite16(vidctrl & 0xff7f, par->fpga_regs + VIDCTRL);
++    iowrite16(((dst >> 16) << 6) | (((rect->width - 1) >> 7) << 13),
++            par->fpga_regs + BLTCTRL);
++    iowrite16((rect->height & 0x1ff) | ((rect->width - 1) << 9),
++            par->fpga_regs + BLTSZ);
++    iowrite16((u16) rect->color & 0xffff, par->fpga_regs + SRCBLT);
++    /*
++     * Use a write memory barrier to ensure that everything is written
++     * before writting to the DSTBLT register. Order is important!
++     */
++    wmb();
++    iowrite16(dst & 0xffff, par->fpga_regs + DSTBLT);
++
++    /* Since we implemented the sync function this is not needed, right? */
++    /*
++    while(ioread16(par->fpga_regs + VIDCTRL) & 0x400)
++        cpu_relax();
++    */
++    ts7370_access_end(par);
++}
++
++/*
++ * Copy a rectangular area for one place to another. Supported by the hardware
++ * accelerator.
++ */
++void ts7370fb_copyarea(struct fb_info *info, const struct fb_copyarea *area)
++{
++    struct ts7370fb_par *par = info->par;
++    u16 vidctrl, direction;
++    u32 src, dst;
++
++    if(info->state != FBINFO_STATE_RUNNING)
++        return;
++
++    /*
++     * If hardware acceleration is disabled then we use the default unaccelerated
++     * function for copying areas.
++     */
++    //printk("debug: info->flags=%X,  FBINFO_HWACCEL_DISABLED=%X\n",info->flags,FBINFO_HWACCEL_DISABLED);
++    //printk("debug1: %d, %d\n",par->width,area->width);
++    if(info->flags & FBINFO_HWACCEL_DISABLED) {
++        cfb_copyarea(info, area);
++        return;
++    }
++
++    //printk(KERN_DEBUG "ts7370fb: Using hardware accelerated copyarea.\n");
++
++    /* Convert to the address needed by the accelerator. */
++    src = area->sy * par->width + area->sx;
++    dst = area->dy * par->width + area->dx;
++    //dst = area->dy * par->width + area->dx + 1; /* RG: do not know the reason for the +1 offset*/
++
++    /*
++     * Swap and change direction so overlapping source and destination areas don't
++     * mess up while drawing.
++     */
++    if(src < dst) {
++        src += (area->height - 1) * (par->width - 1);
++        dst += (area->height - 1) * (par->width - 1);
++        direction = 1 << 7;
++    } else {
++        direction = 0;
++    }
++    ts7370_access_begin(par);
++    vidctrl = ioread16(par->fpga_regs + VIDCTRL);
++    iowrite16((vidctrl & 0xff3f) | direction, par->fpga_regs + VIDCTRL);
++    iowrite16((src >> 16) | ((dst >> 16) << 6) | (((area->width - 1) >> 7) << 13),
++            par->fpga_regs + BLTCTRL);
++    iowrite16((area->height & 0x1ff) | ((area->width - 1) << 9),
++            par->fpga_regs + BLTSZ);
++    iowrite16(src & 0xffff, par->fpga_regs + SRCBLT);
++    /*
++     * Use a write memory barrier to ensure that everything is written
++     * before writting to the DSTBLT register. Order is important!
++     */
++    wmb();
++    iowrite16(dst & 0xffff, par->fpga_regs + DSTBLT);
++
++    /* Since we implemented the sync function this is not needed, right? */
++
++    while(ioread16(par->fpga_regs + VIDCTRL) & 0x400)
++        cpu_relax();
++
++    ts7370_access_end(par);
++}
++
++
++/*
++ * Wait till our blitting operations have finished.
++ */
++int ts7370fb_sync(struct fb_info *info)
++{
++    struct ts7370fb_par *par = info->par;
++
++    ts7370_access_begin(par);
++    while(ioread16(par->fpga_regs + VIDCTRL) & 0x400)
++        cpu_relax();
++    ts7370_access_end(par);
++
++    return 0;
++}
++
++/*
++ * Frame buffer operations.
++ * We use our own fillrect and copyarea operations but the default imageblit since
++ * it's not supported by the hardware accelerator.
++ */
++
++static struct fb_ops ts7370fb_ops = {
++	.owner          = THIS_MODULE,
++	.fb_setcolreg   = ts7370fb_setcolreg,
++	.fb_blank       = ts7370fb_blank,
++	.fb_fillrect    = ts7370fb_fillrect,
++	.fb_copyarea    = ts7370fb_copyarea,
++	.fb_imageblit   = cfb_imageblit,
++	.fb_sync        = ts7370fb_sync,
++};
++
++/*
++ * Find the mode of the framebuffer, either 640x480 or 800x600. In order to do this
++ * we fill the first two lines with color 0xFF and draw a rectangle 2 pixels tall
++ * by 1 pixel wide of color 0x00. Then search the position of the second pixel
++ * with color 0x00. The first one is the first pixel and the second one either
++ * pixel 640 or 800.
++ */
++static int ts7370fb_detectmode(struct ts7370fb_par *par)
++{
++    int pos;
++
++    ts7370_access_begin(par);
++    iowrite16(0x40, par->fpga_regs + VIDCTRL);
++    iowrite16(((TS7370_MAXWIDTH - 1) >> 7) << 13, par->fpga_regs + BLTCTRL);
++    iowrite16(2 | ((TS7370_MAXWIDTH - 1) << 9), par->fpga_regs + BLTSZ);
++    iowrite16(0xFFFF, par->fpga_regs + SRCBLT);
++    iowrite16(0, par->fpga_regs + DSTBLT);
++
++    while(ioread16(par->fpga_regs + VIDCTRL) & 0x400)
++        cpu_relax();
++
++    iowrite16(0x40, par->fpga_regs + VIDCTRL);
++    iowrite16(0, par->fpga_regs + BLTCTRL);
++    iowrite16(2, par->fpga_regs + BLTSZ);
++    iowrite16(0, par->fpga_regs + SRCBLT);
++    /*
++     * Use a write memory barrier to ensure that everything is written
++     * before writting to the DSTBLT register. Order is important!
++     */
++    wmb();
++    iowrite16(0, par->fpga_regs + DSTBLT);
++
++    while(ioread16(par->fpga_regs + VIDCTRL) & 0x400)
++        cpu_relax();
++    ts7370_access_end(par);
++
++    for(pos = 2; pos < 4 * TS7370_MAXWIDTH; pos++)
++        if(ioread8(par->video_mem + pos) == 0x0)
++            break;
++
++    if(pos == 4 * TS7370_MAXWIDTH) {
++        printk(KERN_ERR "ts7370fb: Could not detect screen resolution!\n");
++        return -1;
++    }
++
++    if((pos != 1280) && (pos != 1600)) {
++        printk(KERN_ERR "ts7370fb: Unsupported screen resolution! (2w=%d) Only 640x480 "
++                "and 800x600 are supported.\n",pos);
++        return -1;
++    }
++
++    if (pos == 1280) {
++      par->width = 640;
++      par->height = 480;
++    } else {
++      par->width = 800;
++      par->height = 600;
++    }
++    printk(KERN_INFO "ts7370fb: Detected mode %ix%i.\n", par->width, par->height);
++
++    return 0;
++}
++
++static int ts7370fb_detect_board(void **vid_regs,void **vid_mem) {
++  /* Request memory regions. */
++  if(request_region(MEM16_BASE, 8*1024*1024, "ts7370fb") == NULL) {
++    printk(KERN_ERR "ts7370fb: Cannot get I/O ports!\n");
++    return 0;
++  }
++
++  if(request_region(IO16_BASE, 10, "ts7370fb") == NULL) {
++    printk(KERN_ERR "ts7370fb: Cannot get I/O ports!\n");
++    return 0;
++  }
++
++  *vid_regs = ioremap(IO16_BASE + REGS_VID_BASE + REGS_VID_SIZE * 0,REGS_VID_SIZE);
++  if (*vid_regs == 0) {
++    printk(KERN_ERR "ts7370fb: could not get video register I/O ports!\n");
++    return 0;
++  }
++  *vid_mem  = ioremap(MEM16_BASE + MEM_VID_BASE + MEM_VID_SIZE * 0,MEM_VID_SIZE);
++  if (*vid_mem == 0) {
++    printk(KERN_ERR "ts7370fb: could not get video memory!\n");
++    return 0;
++  }
++  return 1;
++}
++
++/*
++ * Initialization stuff.
++ */
++static int __devinit ts7370fb_probe(struct platform_device *device)
++{
++    int retval = -EIO;
++    struct fb_info *info;
++    struct ts7370fb_par *par;
++    unsigned short *model_reg, model_val;
++
++    /* Dynamically allocate info and par. */
++    info = framebuffer_alloc(sizeof(*par), &device->dev);
++
++    if(!info) {
++        printk(KERN_ERR "ts7370fb: Cannot allocate memory for framebuffer!\n");
++        retval = -ENOMEM;
++        goto err0;
++    }
++
++    par = info->par;
++
++    if (!ts7370fb_detect_board(&par->fpga_regs,&par->video_mem)) {
++      printk("TS-7370 not detected\n");
++      retval = -ENODEV;
++      goto err0;
++    }
++
++    /*
++     * We find the width and height here because we need the framebuffer
++     * memory and the fpga registers and we need to do this before
++     * registering the framebuffer.
++     */
++    model_reg = (unsigned short *)ioremap(0x600ff080,sizeof(unsigned short));
++    model_val = (*model_reg>>4)&0xfff;
++    iounmap(model_reg);
++    if (model_val == 0xcde) {
++      par->width = 800;
++      par->height = 480;
++      printk(KERN_INFO "ts7370fb: Detected mode %ix%i.\n", par->width, par->height);
++    }
++    else if(ts7370fb_detectmode(par) < 0) {
++        retval = -EINVAL;
++        goto err4;
++    }
++
++    /* Set width and height info. */
++    ts7370fb_fix.line_length = par->width * (TS7370_BPP >> 3);
++    ts7370fb_fix.smem_len = par->width * par->height * (TS7370_BPP >> 3);
++    ts7370fb_var.xres = par->width;
++    ts7370fb_var.xres_virtual = par->width;
++    ts7370fb_var.yres = par->height;
++    ts7370fb_var.yres_virtual = par->height;
++
++    /* Allocate palette. */
++    info->pseudo_palette = kmalloc(PALETTE_COLORS * sizeof(u16), GFP_KERNEL);
++    if(!info->pseudo_palette) {
++        printk(KERN_ERR "ts7370fb: Cannot allocate memory for palette!\n");
++        retval = -ENOMEM;
++        goto err5;
++    }
++
++    /*
++     * We set the screen_base to the virtual memory address for the framebuffer.
++     * Resource address and screen_size is standard.
++     */
++    info->screen_base = par->video_mem;
++    info->screen_size = 8*1024*1024;
++    info->fbops = &ts7370fb_ops;
++    info->fix = ts7370fb_fix;
++    info->flags = FBINFO_DEFAULT | FBINFO_HWACCEL_COPYAREA |
++        FBINFO_HWACCEL_FILLRECT;
++
++    /* Allocate colormap. */
++    if(fb_alloc_cmap(&info->cmap, CMAP_LEN, 0) < 0) {
++        printk(KERN_ERR "ts7370fb: Cannot allocate colormap!\n");
++        retval = -ENOMEM;
++        goto err6;
++    }
++
++    info->var = ts7370fb_var;
++
++    /* We're done so register the framebuffer. */
++    if(register_framebuffer(info) < 0) {
++        printk(KERN_ERR "ts7370fb: Cannot register framebuffer!\n");
++        retval = -EINVAL;
++        goto err7;
++    }
++
++    /* Blank the screen. */
++    ts7370_access_begin(par);
++    iowrite16(0x340, par->fpga_regs + VIDCTRL);
++    iowrite16((par->width >> 7) << 13, par->fpga_regs + BLTCTRL);
++    iowrite16((par->height & 0x1ff) | (par->width << 9),
++        par->fpga_regs + BLTSZ);
++    iowrite16(0, par->fpga_regs + SRCBLT);
++    /*
++     * Use a write memory barrier to ensure that everything is written
++     * before writting to the DSTBLT register. Order is important!
++     */
++    wmb();
++    iowrite16(0, par->fpga_regs + DSTBLT);
++    ts7370_access_end(par);
++
++    printk(KERN_INFO "ts7370fb: Framebuffer device loaded and initialized.\n");
++    platform_set_drvdata(device, info);
++
++    return 0;
++
++err7:
++    fb_dealloc_cmap(&info->cmap);
++err6:
++    kfree(info->pseudo_palette);
++err5:
++    iounmap(par->fpga_regs);
++err4:
++    iounmap(par->video_mem);
++    /*
++err3:
++    release_region(IO16_BASE, 10);
++err2:
++    release_region(MEM16_BASE, 8*1024*1024);
++err1:
++    framebuffer_release(info);
++    */
++err0:
++    return retval;
++}
++
++/*
++ *  Cleanup
++ */
++static int ts7370fb_remove(struct platform_device *device)
++{
++    struct fb_info *info = platform_get_drvdata(device);
++
++    if(info) {
++        struct ts7370fb_par *par = info->par;
++        unregister_framebuffer(info);
++        fb_dealloc_cmap(&info->cmap);
++        kfree(info->pseudo_palette);
++        iounmap(par->fpga_regs);
++        iounmap(par->video_mem);
++        release_region(IO16_BASE, 10);
++        release_region(MEM16_BASE, 8*1024*1024);
++        framebuffer_release(info);
++    }
++
++    return 0;
++}
++
++static struct platform_driver ts7370fb_driver = {
++	.probe      = ts7370fb_probe,
++	.remove     = ts7370fb_remove,
++    .driver     = {
++        .name   = "ts7370fb",
++    }
++};
++
++/*
++ * Module loading.
++ */
++static int __devinit ts7370fb_init(void)
++{
++    int ret = 0;
++
++    printk(KERN_INFO "ts7370fb: Loading framebuffer device.\n");
++
++    ret = platform_driver_register(&ts7370fb_driver);
++
++    if(!ret) {
++        ts7370fb_device = platform_device_alloc("ts7370fb", 0);
++
++        if(ts7370fb_device)
++            ret = platform_device_add(ts7370fb_device);
++        else
++            ret = -ENOMEM;
++
++        if(ret) {
++            platform_device_put(ts7370fb_device);
++            platform_driver_unregister(&ts7370fb_driver);
++        }
++    }
++
++    return ret;
++}
++
++/*
++ * Module unloading.
++ */
++static void __devexit ts7370fb_exit(void)
++{
++    platform_device_unregister(ts7370fb_device);
++    platform_driver_unregister(&ts7370fb_driver);
++    printk(KERN_INFO "ts7370fb: Framebuffer device unloaded.\n");
++}
++
++
++/*
++ * Module stuff.
++ */
++
++module_init(ts7370fb_init);
++module_exit(ts7370fb_exit);
++
++MODULE_AUTHOR("Fotis Loukos <fotisl@csd.auth.gr>");
++MODULE_DESCRIPTION("TS-7370 framebuffer driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/video/ts7370fb.h b/drivers/video/ts7370fb.h
+new file mode 100644
+index 0000000..0125940
+--- /dev/null
++++ b/drivers/video/ts7370fb.h
+@@ -0,0 +1,51 @@
++/*
++ * linux/drivers/video/ts7370fb.h
++ *
++ * Framebuffer device for the TS-7370 board.
++ *
++ * Based on the TS-7300 FB driver By Fotis Loukos <fotisl@csd.auth.gr>
++ *
++ * Based on skeletonfb.c for new api by James Simmons and the original driver
++ * for the 2.4 series by Eddie Dawydiuk.
++ */
++
++#if !defined (_TS7370FB_H)
++#define _TS7370FB_H
++
++
++#define BLTCTRL             0
++#define BLTSZ               2
++#define SRCBLT              4
++#define DSTBLT              6
++#define VIDCTRL             8
++
++#define PALETTE_COLORS      16
++#define CMAP_LEN            256
++#define TS7370_BPP          16
++
++#define TS7370_MAXWIDTH     800
++
++#define REG_ID0 0
++#define REG_ID1 1
++#define REG_CTRL0 4
++#define REG_DEVSEL 0x1E
++#define DONE_MASK 0x80
++#define TS7370_ID0 0x41
++#define TS7370_ID1 0x20
++#define IO16_BASE 0x600FF030
++#define MEM16_BASE 0x60100000
++#define REGS_CTRL_BASE 0xE0
++#define REGS_VID_BASE 0x00
++#define MEM_VID_BASE 0x00
++#define REGS_CTRL_SIZE 8
++#define REGS_VID_SIZE 0x20
++#define MEM_VID_SIZE 0x100000
++
++struct ts7370fb_par {
++  void __iomem *video_mem;
++  void __iomem *fpga_regs;
++  u16 width;
++  u16 height;
++};
++
++#endif
+-- 
+1.5.4.3
+

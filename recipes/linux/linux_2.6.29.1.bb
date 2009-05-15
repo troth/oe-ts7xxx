@@ -36,4 +36,7 @@ SRC_URI_append_ts7390 = " \
         file://0022-ts7200_cf_ide.patch;patch=1 \
         file://0023-ts7250_nand.patch;patch=1 \
         file://leds_netdev_trigger.patch;patch=1 \
+        file://0040-ts7390-frame-buffer.patch;patch=1 \
+        file://0041-ts7390-touchscreen.patch;patch=1 \
+        file://0042-ts7390-dummy-pressure.patch;patch=1 \
 	"
