@@ -1,0 +1,10 @@
+--- qt-embedded-linux-opensource-src-4.5.1/src/gui/embedded/qscreenlinuxfb_qws.cpp-orig	2009-04-21 17:02:01.000000000 -0700
++++ qt-embedded-linux-opensource-src-4.5.1/src/gui/embedded/qscreenlinuxfb_qws.cpp	2009-05-12 14:17:34.000000000 -0700
+@@ -319,6 +319,7 @@
+         return false;
+     }
+ 
++    vinfo.green.length = 6; // Fix for ts7390
+     grayscale = vinfo.grayscale;
+     d = vinfo.bits_per_pixel;
+     if (d == 24) {

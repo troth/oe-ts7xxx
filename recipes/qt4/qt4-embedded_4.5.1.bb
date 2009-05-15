@@ -18,6 +18,10 @@ SRC_URI = "ftp://ftp.trolltech.com/qt/source/qt-embedded-linux-opensource-src-${
            file://g++.conf \
            file://linux.conf \
            "
+SRC_URI_append_ts7390 = " \
+           file://${PV}/ts7390-green-6bits.patch;patch=1 \
+           "
+
 S = "${WORKDIR}/qt-embedded-linux-opensource-src-${PV}"
 
 QT_CONFIG_FLAGS += " \
